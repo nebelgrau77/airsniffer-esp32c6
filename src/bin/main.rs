@@ -30,6 +30,7 @@ use esp_hal::{
     Output,
     OutputConfig
   },  
+  Async
 };
 
 
@@ -42,6 +43,15 @@ use arrayvec::ArrayString;
 use static_cell::StaticCell;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
+use embassy_sync::{
+    signal::Signal,
+    blocking_mutex::raw::{
+        CriticalSectionRawMutex,
+        NoopRawMutex,                              
+    },
+    mutex::Mutex,    
+    pubsub::PubSubChannel,    
+};
 
 // Embedded graphics stuff
 use embedded_graphics::pixelcolor::Rgb565;
@@ -66,6 +76,40 @@ use mousefood::{EmbeddedBackend, EmbeddedBackendConfig, fonts};
 use ratatui::{layout::{Constraint, Flex, Layout}};
 use ratatui::widgets::{Block, Paragraph, Wrap, Gauge};
 use ratatui::{style::*, Frame, Terminal};
+
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
+use ens160::{Ens160};
+
+// Types defined for I2C devices (bus, display)
+type SharedI2cDevice = I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>;
+
+// I2C shared bus
+static I2CBUS: StaticCell<Mutex<NoopRawMutex, I2c<'static, Async>>> = StaticCell::new();
+
+// Signal to pass HH:MM:SS time value between tasks
+//static TIMESIGNAL: Signal<CriticalSectionRawMutex, DateTime> = Signal::new();
+static AQISIGNAL: Signal<CriticalSectionRawMutex, AirQualityData> = Signal::new();
+
+// Signal to pass BME data between tasks
+static ENVIROSIGNAL: PubSubChannel<CriticalSectionRawMutex, Enviro, 1,3, 1> = PubSubChannel::new();
+
+
+#[derive(Clone, Copy)]
+struct AirQualityData {
+    temperature: f32,    
+    humidity: f32,   
+    pressure: f32,
+    tvoc: u16,    
+    aqi: u8
+    }
+
+
+#[derive(Clone, Copy)]
+struct Enviro {
+    temperature: f32,
+    humidity: f32,
+    pressure: f32,   
+    }
 
 
 #[panic_handler]
@@ -109,18 +153,38 @@ async fn main(spawner: Spawner) -> ! {
     info!("Embassy initialized!");
 
 
-    /*
+    
     let i2c_bus = I2c::new(
         peripherals.I2C0,
         I2cConfig::default().with_frequency(Rate::from_khz(100)),
     )
     .unwrap()
     .with_scl(peripherals.GPIO23)
-    .with_sda(peripherals.GPIO22);
+    .with_sda(peripherals.GPIO22)
+    .into_async();
 
     info!("I2C initialized!");
 
- */
+    let bus = Mutex::<NoopRawMutex, _>::new(i2c_bus);
+    //let bus = Mutex::<NoopRawMutex, _>::new(core::cell::RefCell::new(i2c_bus));  
+    let bus = I2CBUS.init(bus);
+
+
+    info!("shared I2C bus set up");
+
+    let mut ens160_aqi = Ens160::new(I2cDevice::new(bus), 0x53);
+    info!("Initialized ENS160");
+    Timer::after(Duration::from_millis(250)).await;
+    
+    ens160_aqi.reset().await.ok();
+    info!("ENS160 reset");
+    Timer::after(Duration::from_millis(250)).await;
+    
+    ens160_aqi.operational().await.ok();
+
+    info!("ens 160 id: {}", ens160_aqi.part_id().await.unwrap());
+
+ 
 
       let spi = Spi::new(
     peripherals.SPI2,
@@ -187,7 +251,7 @@ async fn main(spawner: Spawner) -> ! {
     Timer::after(Duration::from_secs(2)).await;
 
     // TODO: Spawn some tasks
-    let _ = spawner;
+    spawner.spawn(get_aqi(ens160_aqi)).ok();
 
     
     // Create a custom config with a flush callback
@@ -217,12 +281,17 @@ async fn main(spawner: Spawner) -> ! {
     let mut val: u16 = 0;
 
     loop {
-        info!("Hello world!");
-        Timer::after(Duration::from_secs(1)).await;
+        //info!("Hello world!");
+        //Timer::after(Duration::from_secs(1)).await;
+
+        let aqidata = AQISIGNAL.wait().await;
+
+        info!("got data: temp {}, hum {}, press {}, tvoc {}, aqi {}", aqidata.temperature, aqidata.humidity, aqidata.pressure, aqidata.tvoc, aqidata.aqi);
+
         
         terminal.draw(
         |frame| {
-                draw(frame, val);
+                draw(frame, aqidata);
         }).unwrap();    
 
         val += 1;
@@ -239,7 +308,7 @@ async fn main(spawner: Spawner) -> ! {
  const TEAL: Color = Color::Rgb(100, 220, 220);
 const ORANGE: Color = Color::Rgb(250, 145, 55);
 
-fn draw(frame: &mut Frame, value: u16) {
+fn draw(frame: &mut Frame, aqidata: AirQualityData) {
         
     let vertical = Layout::vertical([
         //Constraint::Percentage(30),         
@@ -259,11 +328,35 @@ fn draw(frame: &mut Frame, value: u16) {
     let [fourth_bottom_left, fourth_bottom_right] = horizontal_fourth.areas(fourth);
     
     
-    let gauge = Gauge::default()            
+    info!("AQI: {}", aqidata.aqi);
+
+    let gauge = match aqidata.aqi {
+        1 => Gauge::default()            
             .gauge_style(Style::new().fg(TEAL).bg(Color::Black))
             .ratio(1_f64)
-            .label("excellent");
-        
+            .label("excellent"), 
+        2 => Gauge::default()            
+            .gauge_style(Style::new().fg(TEAL).bg(Color::Black))
+            .ratio(1_f64)
+            .label("good"), 
+        3 => Gauge::default()            
+            .gauge_style(Style::new().fg(Color::Black).bg(TEAL))
+            .ratio(1_f64)
+            .label("moderate"), 
+        4 => Gauge::default()            
+            .gauge_style(Style::new().fg(Color::Black).bg(ORANGE))
+            .ratio(1_f64)
+            .label("poor"), 
+        5 => Gauge::default()            
+            .gauge_style(Style::new().fg(ORANGE).bg(Color::Black))
+            .ratio(1_f64)
+            .label("unhealthy"), 
+        _ => Gauge::default()            
+            .gauge_style(Style::new().fg(Color::White).bg(Color::Black))
+            .ratio(1_f64)
+            .label("unknown"), 
+    
+    };    
 
     let bordered_block = Block::bordered()
         .border_style(Style::new().fg(TEAL))                
@@ -275,7 +368,7 @@ fn draw(frame: &mut Frame, value: u16) {
     // four frames - top left        
 
     let mut textbuffer = ArrayString::<16>::new();
-    write!(&mut textbuffer, "{} C", round_float(23.5)).unwrap();
+    write!(&mut textbuffer, "{} C", round_float(aqidata.temperature)).unwrap();
 
     //let paragraph = Paragraph::new(textbuffer.as_str().white())
     let paragraph = Paragraph::new(textbuffer.as_str().fg(ORANGE))
@@ -292,7 +385,7 @@ fn draw(frame: &mut Frame, value: u16) {
     // four frames - top right        
 
     let mut textbuffer = ArrayString::<16>::new();
-    write!(&mut textbuffer, "{} %", round_float(65.3)).unwrap();
+    write!(&mut textbuffer, "{} %", round_float(aqidata.humidity)).unwrap();
 
     let paragraph = Paragraph::new(textbuffer.as_str().fg(ORANGE))
         .wrap(Wrap { trim: true })
@@ -310,7 +403,7 @@ fn draw(frame: &mut Frame, value: u16) {
     // four frames - bottom left        
 
     let mut textbuffer = ArrayString::<16>::new();
-    write!(&mut textbuffer, "{} hPa", round_float(985.2)).unwrap();
+    write!(&mut textbuffer, "{} hPa", round_float(aqidata.pressure)).unwrap();
 
 
     let paragraph = Paragraph::new(textbuffer.as_str().fg(ORANGE))
@@ -329,7 +422,7 @@ fn draw(frame: &mut Frame, value: u16) {
     // four frames - bottom right
 
     let mut textbuffer = ArrayString::<16>::new();
-    write!(&mut textbuffer, "{}", value).unwrap();
+    write!(&mut textbuffer, "{}", aqidata.tvoc).unwrap();
 
     
 
@@ -350,4 +443,34 @@ fn draw(frame: &mut Frame, value: u16) {
 
 fn round_float(val: f32) -> f32 {
     (((val * 100_f32) as i32) as f32) / 100_f32     
+}
+
+
+#[embassy_executor::task]
+async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>) {    
+    // check if ENS160 is ready and get data
+    // get BME280 data
+    // pass it all to Signal
+
+    //let mut sub_bme = ENVIROSIGNAL.subscriber().unwrap();
+
+    loop {    
+        if let Ok(status) = sensor.status().await {
+            if status.data_is_ready() {                    
+                // some static data
+                let envi = Enviro {temperature: 25.00, humidity: 55.00, pressure: 980.0 };
+                //let envi = sub_bme.next_message_pure().await;
+                let airquality = AirQualityData {
+                    tvoc: sensor.tvoc().await.unwrap(),                    
+                    temperature: envi.temperature,
+                    humidity: envi.humidity,
+                    pressure: envi.pressure,
+                    aqi: sensor.air_quality_index().await.unwrap() as u8
+                };
+                AQISIGNAL.signal(airquality);
+                info!("got air quality data from sensor");
+            }
+        Timer::after(Duration::from_secs(2)).await;
+        }
+    }
 }

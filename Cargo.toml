@@ -45,6 +45,7 @@ mousefood = { version="0.3.0", default-features = false, features = [
 ] }
 ratatui = { version = "0.30", default-features = false }
 
+ens160 = {version = "0.6.1", default-features = false, features = ["async"]}
 
 
 [profile.dev]
