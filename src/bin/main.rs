@@ -270,7 +270,7 @@ async fn main(spawner: Spawner) -> ! {
     // TODO: Spawn some tasks
     spawner.spawn(get_aqi(ens160_aqi, 5u32)).ok();
     spawner.spawn(get_measurements(bme280)).ok();
-    spawner.spawn(blink(led, 1000)).ok();
+    //spawner.spawn(blink(led, 1000)).ok();
     
     // Create a custom config with a flush callback
     let backend_config = EmbeddedBackendConfig 
