@@ -48,6 +48,10 @@ ratatui = { version = "0.30", default-features = false }
 ens160 = {version = "0.6.1", default-features = false, features = ["async"]}
 
 
+#bme280 = { git = "https://github.com/RobinThrift/bme280-rs.git", version = "0.4", default-features = false, features = ["async"]}
+
+bme280-rs = "0.3.0"
+
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization

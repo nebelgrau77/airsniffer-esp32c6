@@ -77,6 +77,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 
 [[package]]
+name = "bme280-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97b9c5f8cda3fc2c518da006efb17147d2814349adf209911141168838ea5b54"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "log",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -93,6 +104,7 @@ name = "c6-tft"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "bme280-rs",
  "critical-section",
  "defmt 1.0.1",
  "embassy-embedded-hal",
