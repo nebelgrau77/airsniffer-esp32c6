@@ -209,12 +209,20 @@ async fn main(spawner: Spawner) -> ! {
 
     Timer::after(Duration::from_millis(10)).await;
 
+    let measurements = bme280.read_sample().await.unwrap();
+    
+    /*
     if let Some(temperature) = bme280.read_temperature().await.unwrap() {
     info!("Temperature: {} C", temperature);
 } else {
     info!("Temperature reading was disabled");
-}
+    } */
  
+
+    info!("calibrating...");
+
+    ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.ok();
+    ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.ok();
 
     // set up display
 
@@ -265,10 +273,10 @@ async fn main(spawner: Spawner) -> ! {
 
     Timer::after(Duration::from_millis(500)).await;
     
-    let led = Output::new(peripherals.GPIO15, Level::Low, OutputConfig::default());
+    let led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
 
     // TODO: Spawn some tasks
-    spawner.spawn(get_aqi(ens160_aqi, 5u32)).ok();
+    spawner.spawn(get_aqi(ens160_aqi, 5u32, 5u64)).ok();
     spawner.spawn(get_measurements(bme280)).ok();
     //spawner.spawn(blink(led, 1000)).ok();
     
@@ -439,7 +447,7 @@ fn draw(frame: &mut Frame, aqidata: AirQualityData) {
 
 
 #[embassy_executor::task]
-async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32) {    
+async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq_secs: u64) {    
     // check if ENS160 is ready and get data
     // get BME280 data
     // pass it all to Signal
@@ -447,6 +455,12 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32) {
     let mut sub_bme = ENVIROSIGNAL.subscriber().unwrap();
 
     loop {    
+        info!("wake up the sensor...");
+        //sensor.idle().await.ok();
+        //Timer::after(Duration::from_millis(100)).await;
+        sensor.operational().await.ok();
+        Timer::after(Duration::from_millis(1000)).await;
+
         if let Ok(status) = sensor.status().await {
             if status.data_is_ready() {                                    
                 let envi = sub_bme.next_message_pure().await;
@@ -467,7 +481,11 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32) {
                     COUNTER.store(counter.wrapping_add(1), Ordering::Relaxed);
                 }
             }
-        Timer::after(Duration::from_secs(2)).await;
+        
+        //sensor.deep_sleep().await.ok();
+        sensor.idle().await.ok();
+        info!("sensor put to sleep...");
+        Timer::after(Duration::from_secs(freq_secs)).await;
         }
     }
 }
