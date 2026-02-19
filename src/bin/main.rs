@@ -80,7 +80,7 @@ use ratatui::{style::*, Frame, Terminal};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use ens160::{Ens160};
 
-use bme280_rs::{AsyncBme280, Configuration, Oversampling, SensorMode};
+use bme280_rs::{Bme280, AsyncBme280, Configuration, Oversampling, SensorMode};
 
 // Types defined for I2C devices (bus, display)
 type SharedI2cDevice = I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>;
@@ -95,6 +95,8 @@ static AQISIGNAL: Signal<CriticalSectionRawMutex, AirQualityData> = Signal::new(
 // Signal to pass BME data between tasks
 static ENVIROSIGNAL: PubSubChannel<CriticalSectionRawMutex, Enviro, 1,3, 1> = PubSubChannel::new();
 
+// BME280 sensor
+static BME280_CELL: StaticCell<AsyncBme280<SharedI2cDevice, DelayNs>> = StaticCell::new();
 
 #[derive(Clone, Copy)]
 struct AirQualityData {
@@ -187,9 +189,11 @@ async fn main(spawner: Spawner) -> ! {
     info!("ens 160 id: {}", ens160_aqi.part_id().await.unwrap());
 
 
-    let mut delayns = DelayNs {};
+    let delayns = DelayNs {};
 
     let mut bme280 = AsyncBme280::new(I2cDevice::new(bus), delayns);
+
+    let bme280 = BME280_CELL.init(bme280);
 
     bme280.init().await.unwrap();
 
@@ -200,6 +204,8 @@ async fn main(spawner: Spawner) -> ! {
         .with_humidity_oversampling(Oversampling::Oversample1)
         .with_sensor_mode(SensorMode::Normal)
     ).await.unwrap();
+
+    
 
     Timer::after(Duration::from_millis(10)).await;
 
@@ -249,19 +255,14 @@ async fn main(spawner: Spawner) -> ! {
     const ORANGE: Rgb565 = Rgb565::new(250, 145, 55);
 
 
-    let text_style = MonoTextStyle::new(&PROFONT_24_POINT, TEAL);
-    Text::with_baseline("test", Point::new(30, 10), text_style, Baseline::Top)
+    let text_style = MonoTextStyle::new(&PROFONT_10_POINT, TEAL);
+    Text::with_baseline("system starting...", Point::new(10, 10), text_style, Baseline::Top)
     .draw(&mut display)
     .unwrap();
+    
+    Timer::after(Duration::from_secs(2)).await;
 
-    let text_style = MonoTextStyle::new(&PROFONT_14_POINT, ORANGE);
-
-    Text::with_baseline("of TFT", Point::new(20, 50), text_style, Baseline::Top)
-        .draw(&mut display)
-        .unwrap();
-
-    Timer::after(Duration::from_secs(5)).await;
-
+    /*
     display.clear(Rgb565::WHITE).unwrap();
 
     Timer::after(Duration::from_millis(500)).await;
@@ -269,14 +270,19 @@ async fn main(spawner: Spawner) -> ! {
     display.clear(Rgb565::RED).unwrap();
 
     Timer::after(Duration::from_millis(500)).await;
-
+    */
     display.clear(Rgb565::BLACK).unwrap();
 
-    Timer::after(Duration::from_secs(2)).await;
+    Timer::after(Duration::from_millis(500)).await;
+    //Timer::after(Duration::from_secs(2)).await;
+
+
+    let led = Output::new(peripherals.GPIO15, Level::Low, OutputConfig::default());
 
     // TODO: Spawn some tasks
     spawner.spawn(get_aqi(ens160_aqi)).ok();
-
+    spawner.spawn(get_measurements(bme280)).ok();
+    spawner.spawn(blink(led)).ok();
     
     // Create a custom config with a flush callback
     let backend_config = EmbeddedBackendConfig 
@@ -293,16 +299,6 @@ async fn main(spawner: Spawner) -> ! {
 
       info!("mousefood set up");
 
-    //terminal.draw(draw).unwrap();
-
-    /*
-    terminal.draw(
-        |frame| {
-                draw(frame);
-        }).unwrap();    
-    */
-
-    let mut val: u16 = 0;
 
     loop {
         //info!("Hello world!");
@@ -318,14 +314,11 @@ async fn main(spawner: Spawner) -> ! {
                 draw(frame, aqidata);
         }).unwrap();    
 
-        val += 1;
-    
   
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
 }
-
 
 
 
@@ -466,7 +459,7 @@ fn draw(frame: &mut Frame, aqidata: AirQualityData) {
 
 
 fn round_float(val: f32) -> f32 {
-    (((val * 100_f32) as i32) as f32) / 100_f32     
+    (((val * 10_f32) as i32) as f32) / 10_f32     
 }
 
 
@@ -476,14 +469,14 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>) {
     // get BME280 data
     // pass it all to Signal
 
-    //let mut sub_bme = ENVIROSIGNAL.subscriber().unwrap();
+    let mut sub_bme = ENVIROSIGNAL.subscriber().unwrap();
 
     loop {    
         if let Ok(status) = sensor.status().await {
             if status.data_is_ready() {                    
                 // some static data
-                let envi = Enviro {temperature: 25.00, humidity: 55.00, pressure: 980.0 };
-                //let envi = sub_bme.next_message_pure().await;
+                //let envi = Enviro {temperature: 25.00, humidity: 55.00, pressure: 980.0 };
+                let envi = sub_bme.next_message_pure().await;
                 let airquality = AirQualityData {
                     tvoc: sensor.tvoc().await.unwrap(),                    
                     temperature: envi.temperature,
@@ -496,5 +489,43 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>) {
             }
         Timer::after(Duration::from_secs(2)).await;
         }
+    }
+}
+
+
+#[embassy_executor::task]
+async fn blink(mut led: Output<'static>) {  
+    loop {
+        led.toggle();
+        Timer::after(Duration::from_millis(500)).await;
+    }
+}
+
+
+#[embassy_executor::task]
+async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>, DelayNs>) {
+    // get temperature, humidity and pressure from BME280 sensor and publish as ENVIROSIGNAL
+    let pub_bme = ENVIROSIGNAL.publisher().unwrap();
+   
+    loop {
+
+        let measurements = bme.read_sample().await.unwrap();
+
+        //let measurements = sensor.measure(&mut delayns).await.unwrap();
+        info!("task - Got BME measurements! T: {}°C, RH: {}%, P: {} Pa",             
+            measurements.temperature,
+            measurements.humidity,
+            measurements.pressure
+        );
+
+        let envdata = Enviro {
+            temperature: measurements.temperature.unwrap_or(0.0),
+            humidity: measurements.humidity.unwrap_or(0.0),
+            pressure: measurements.pressure.unwrap_or(0.0) / 100.0,                   
+        };
+
+        pub_bme.publish_immediate(envdata);
+        
+        Timer::after(Duration::from_secs(1)).await;
     }
 }
