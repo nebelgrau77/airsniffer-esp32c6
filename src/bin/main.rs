@@ -72,9 +72,12 @@ use profont::{PROFONT_10_POINT};
 use core::fmt::Write;   
 use arrayvec::ArrayString;
 
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering;
+
 // For ratatui
 use mousefood::{EmbeddedBackend, EmbeddedBackendConfig, fonts};
-use ratatui::{layout::{Constraint, Flex, Layout}, style::palette::material::GRAY};
+use ratatui::layout::{Constraint, Flex, Layout};
 use ratatui::widgets::{Block, Paragraph, Wrap, Gauge};
 use ratatui::{style::*, Frame, Terminal};
 
@@ -99,6 +102,9 @@ static ENVIROSIGNAL: PubSubChannel<CriticalSectionRawMutex, Enviro, 1,3, 1> = Pu
 
 // BME280 sensor
 static BME280_CELL: StaticCell<AsyncBme280<SharedI2cDevice, DelayNs>> = StaticCell::new();
+
+// counter for calibration
+static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 // structs to hold sensor data
 #[derive(Clone, Copy)]
@@ -262,7 +268,7 @@ async fn main(spawner: Spawner) -> ! {
     let led = Output::new(peripherals.GPIO15, Level::Low, OutputConfig::default());
 
     // TODO: Spawn some tasks
-    spawner.spawn(get_aqi(ens160_aqi)).ok();
+    spawner.spawn(get_aqi(ens160_aqi, 5u32)).ok();
     spawner.spawn(get_measurements(bme280)).ok();
     spawner.spawn(blink(led, 1000)).ok();
     
@@ -433,7 +439,7 @@ fn draw(frame: &mut Frame, aqidata: AirQualityData) {
 
 
 #[embassy_executor::task]
-async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>) {    
+async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32) {    
     // check if ENS160 is ready and get data
     // get BME280 data
     // pass it all to Signal
@@ -453,6 +459,13 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>) {
                 };
                 AQISIGNAL.signal(airquality);
                 info!("got air quality data from sensor");
+                let counter = COUNTER.load(core::sync::atomic::Ordering::Relaxed);
+                if counter >= calibration {
+                    info!("time to calibrate...");
+                    COUNTER.store(0, Ordering::Relaxed);
+                } else {
+                    COUNTER.store(counter.wrapping_add(1), Ordering::Relaxed);
+                }
             }
         Timer::after(Duration::from_secs(2)).await;
         }
