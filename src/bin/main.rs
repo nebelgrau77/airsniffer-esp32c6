@@ -9,7 +9,7 @@
 
 use defmt::info;
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Timer, Delay as DelayNs};
 use embedded_graphics::mock_display::ColorMapping;
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
@@ -79,6 +79,8 @@ use ratatui::{style::*, Frame, Terminal};
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use ens160::{Ens160};
+
+use bme280_rs::{AsyncBme280, Configuration, Oversampling, SensorMode};
 
 // Types defined for I2C devices (bus, display)
 type SharedI2cDevice = I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>;
@@ -184,6 +186,28 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("ens 160 id: {}", ens160_aqi.part_id().await.unwrap());
 
+
+    let mut delayns = DelayNs {};
+
+    let mut bme280 = AsyncBme280::new(I2cDevice::new(bus), delayns);
+
+    bme280.init().await.unwrap();
+
+    bme280.set_sampling_configuration(
+    Configuration::default()
+        .with_temperature_oversampling(Oversampling::Oversample1)
+        .with_pressure_oversampling(Oversampling::Oversample1)
+        .with_humidity_oversampling(Oversampling::Oversample1)
+        .with_sensor_mode(SensorMode::Normal)
+    ).await.unwrap();
+
+    Timer::after(Duration::from_millis(10)).await;
+
+    if let Some(temperature) = bme280.read_temperature().await.unwrap() {
+    info!("Temperature: {} C", temperature);
+} else {
+    info!("Temperature reading was disabled");
+}
  
 
       let spi = Spi::new(
