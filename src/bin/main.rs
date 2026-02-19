@@ -304,8 +304,6 @@ const CWARNING: Color = Color::Rgb(209, 154, 102);
 
 fn draw(frame: &mut Frame, aqidata: AirQualityData) {
 
-   
-
     let vertical = Layout::vertical([
         //Constraint::Percentage(30),         
         Constraint::Percentage(30), 
