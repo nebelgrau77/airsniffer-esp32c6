@@ -95,10 +95,23 @@ static SPI_BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
 static I2CBUS: StaticCell<Mutex<NoopRawMutex, I2c<'static, Async>>> = StaticCell::new();
 
 // signals to pass between tasks
-static AQISIGNAL: Signal<CriticalSectionRawMutex, AirQualityData> = Signal::new();
+//static AQISIGNAL: Signal<CriticalSectionRawMutex, AirQualityData> = Signal::new();
+static AQISIGNAL: Signal<CriticalSectionRawMutex, AQIData> = Signal::new();
 
 // Signal to pass BME data between tasks
-static ENVIROSIGNAL: PubSubChannel<CriticalSectionRawMutex, Enviro, 1,3, 1> = PubSubChannel::new();
+static ENVIROSIGNAL: PubSubChannel<CriticalSectionRawMutex, Enviro, 1,3, 2> = PubSubChannel::new();
+
+// Signal to pass all data between tasks
+static DATASIGNAL: PubSubChannel<CriticalSectionRawMutex, AirQualityData, 1,3, 1> = PubSubChannel::new();
+
+
+// shared last BME data - readable by any task, never consumed
+static ENVIRO_STATE: Mutex<CriticalSectionRawMutex, Enviro> = Mutex::new(Enviro {
+    temperature: 22.0, humidity: 50.0, pressure: 985.0
+});
+
+// wake up signal for the main loop to fire when BME data is updated
+static TRIGGER: Signal<CriticalSectionRawMutex, ()>  = Signal::new();
 
 // BME280 sensor
 static BME280_CELL: StaticCell<AsyncBme280<SharedI2cDevice, DelayNs>> = StaticCell::new();
@@ -115,6 +128,15 @@ struct AirQualityData {
     tvoc: u16,    
     aqi: u8
     }
+
+// structs to hold sensor data
+#[derive(Clone, Copy)]
+struct AQIData {    
+    tvoc: u16,    
+    aqi: u8
+    }
+
+
 
 #[derive(Clone, Copy)]
 struct Enviro {
@@ -258,6 +280,7 @@ async fn main(spawner: Spawner) -> ! {
     Orientation::default().rotate(Rotation::Deg90)
     ).unwrap();
 
+    /*
     // Clear with the new orientation
     display.clear(Rgb565::BLACK).unwrap();
 
@@ -273,12 +296,12 @@ async fn main(spawner: Spawner) -> ! {
     display.clear(Rgb565::BLACK).unwrap();
 
     Timer::after(Duration::from_millis(500)).await;
-    
+ */    
     //let led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
 
     // TODO: Spawn some tasks
     spawner.spawn(get_aqi(ens160_aqi, 5u32, 10u64)).ok();
-    spawner.spawn(get_measurements(bme280, 2u64)).ok();
+    spawner.spawn(get_measurements(bme280, 5u64)).ok();
     //spawner.spawn(blink(led, 1000)).ok();
     
     // Create a custom config with a flush callback
@@ -295,16 +318,37 @@ async fn main(spawner: Spawner) -> ! {
     info!("mousefood set up");
 
 
+    let mut last_data = AirQualityData {
+        temperature: 0.0,
+        humidity: 0.0,
+        pressure: 0.0,
+        tvoc: 0,
+        aqi: 0,
+    };
 
 
     loop {
-    
-        let aqidata = AQISIGNAL.wait().await;
-        info!("got data: temp {}, hum {}, press {}, tvoc {}, aqi {}", aqidata.temperature, aqidata.humidity, aqidata.pressure, aqidata.tvoc, aqidata.aqi);
-        
+        TRIGGER.wait().await;
+
+        let enviro = ENVIRO_STATE.lock().await;
+
+        //let aqidata = AQISIGNAL.wait().await;
+        info!("got data: temp {}, hum {}, press {}", enviro.temperature, enviro.humidity, enviro.pressure);
+
+        last_data.temperature = enviro.temperature;
+        last_data.humidity = enviro.humidity;
+        last_data.pressure = enviro.pressure;
+
+        drop(enviro);
+
+        if let Some(aqidata) = AQISIGNAL.try_take() {
+            last_data.tvoc = aqidata.tvoc;
+            last_data.aqi = aqidata.aqi;
+        }
+
         terminal.draw(
         |frame| {
-                draw(frame, aqidata);
+                draw(frame, last_data);
         }).unwrap();    
   
     }
@@ -453,30 +497,31 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq_sec
     // get BME280 data
     // pass it all to Signal
 
-    let mut sub_bme = ENVIROSIGNAL.subscriber().unwrap();
+    //let mut sub_bme = ENVIROSIGNAL.subscriber().unwrap();
 
     loop {    
         info!("wake up the sensor...");
-        //sensor.idle().await.ok();
-        //Timer::after(Duration::from_millis(100)).await;
         sensor.operational().await.ok();
         Timer::after(Duration::from_millis(1000)).await;
 
         if let Ok(status) = sensor.status().await {
             if status.data_is_ready() {                                    
-                let envi = sub_bme.next_message_pure().await;
-                let airquality = AirQualityData {
-                    tvoc: sensor.tvoc().await.unwrap(),                    
-                    temperature: envi.temperature,
-                    humidity: envi.humidity,
-                    pressure: envi.pressure,
+                
+                //let airquality = AirQualityData {
+                let airquality = AQIData {
+                    tvoc: sensor.tvoc().await.unwrap(),                                        
                     aqi: sensor.air_quality_index().await.unwrap() as u8
                 };
+                
                 AQISIGNAL.signal(airquality);
+
                 info!("got air quality data from sensor");
                 let counter = COUNTER.load(core::sync::atomic::Ordering::Relaxed);
                 if counter >= calibration {
                     info!("time to calibrate...");
+                    let envi = ENVIRO_STATE.lock().await;
+                    info!("got data for calibration: {}°C, {} %", envi.temperature, envi.humidity);
+                    drop(envi); // release lock
                     COUNTER.store(0, Ordering::Relaxed);
                 } else {
                     COUNTER.store(counter.wrapping_add(1), Ordering::Relaxed);
@@ -505,8 +550,8 @@ async fn blink(mut led: Output<'static>, ms: u16) {
 #[embassy_executor::task]
 async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>, DelayNs>, freq_secs: u64) {
     // get temperature, humidity and pressure from BME280 sensor and publish as ENVIROSIGNAL
-    let pub_bme = ENVIROSIGNAL.publisher().unwrap();
-   
+    //let pub_bme = ENVIROSIGNAL.publisher().unwrap();
+    
     loop {
 
         let measurements = bme.read_sample().await.unwrap();
@@ -519,15 +564,24 @@ async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, NoopR
             measurements.pressure.unwrap_or(0.0)
         );
         
+        {
+            let mut state = ENVIRO_STATE.lock().await;
+            state.temperature = measurements.temperature.unwrap_or(0.0);
+            state.humidity = measurements.humidity.unwrap_or(0.0);
+            state.pressure = measurements.pressure.unwrap_or(0.0) / 100.0;
+        }
+        
+        TRIGGER.signal(());
 
+        /*
         let envdata = Enviro {
             temperature: measurements.temperature.unwrap_or(0.0),
             humidity: measurements.humidity.unwrap_or(0.0),
             pressure: measurements.pressure.unwrap_or(0.0) / 100.0,                   
         };
+         */
+            
 
-        pub_bme.publish_immediate(envdata);
-        
         Timer::after(Duration::from_secs(freq_secs)).await;
     }
 }
