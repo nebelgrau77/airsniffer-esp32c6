@@ -291,12 +291,12 @@ async fn main(spawner: Spawner) -> ! {
     .unwrap();
     
     Timer::after(Duration::from_secs(2)).await;
-
+ */
     
     display.clear(Rgb565::BLACK).unwrap();
 
     Timer::after(Duration::from_millis(500)).await;
- */    
+ 
     //let led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
 
     // TODO: Spawn some tasks
