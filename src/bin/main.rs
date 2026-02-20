@@ -200,6 +200,7 @@ async fn main(spawner: Spawner) -> ! {
         .with_temperature_oversampling(Oversampling::Oversample1)
         .with_pressure_oversampling(Oversampling::Oversample1)
         .with_humidity_oversampling(Oversampling::Oversample1)
+        //.with_sensor_mode(SensorMode::Forced)
         .with_sensor_mode(SensorMode::Normal)
     ).await.unwrap();
 
@@ -273,11 +274,11 @@ async fn main(spawner: Spawner) -> ! {
 
     Timer::after(Duration::from_millis(500)).await;
     
-    let led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
+    //let led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
 
     // TODO: Spawn some tasks
-    spawner.spawn(get_aqi(ens160_aqi, 5u32, 5u64)).ok();
-    spawner.spawn(get_measurements(bme280)).ok();
+    spawner.spawn(get_aqi(ens160_aqi, 5u32, 10u64)).ok();
+    spawner.spawn(get_measurements(bme280, 2u64)).ok();
     //spawner.spawn(blink(led, 1000)).ok();
     
     // Create a custom config with a flush callback
@@ -502,22 +503,22 @@ async fn blink(mut led: Output<'static>, ms: u16) {
 
 
 #[embassy_executor::task]
-async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>, DelayNs>) {
+async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>, DelayNs>, freq_secs: u64) {
     // get temperature, humidity and pressure from BME280 sensor and publish as ENVIROSIGNAL
     let pub_bme = ENVIROSIGNAL.publisher().unwrap();
    
     loop {
 
         let measurements = bme.read_sample().await.unwrap();
-
+        //Timer::after(Duration::from_millis(1000)).await;
         
-        /*
+        
         info!("task - Got BME measurements! T: {}°C, RH: {}%, P: {} Pa",             
-            measurements.temperature,
-            measurements.humidity,
-            measurements.pressure
+            measurements.temperature.unwrap_or(0.0),
+            measurements.humidity.unwrap_or(0.0),
+            measurements.pressure.unwrap_or(0.0)
         );
-         */
+        
 
         let envdata = Enviro {
             temperature: measurements.temperature.unwrap_or(0.0),
@@ -527,7 +528,7 @@ async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, NoopR
 
         pub_bme.publish_immediate(envdata);
         
-        Timer::after(Duration::from_secs(1)).await;
+        Timer::after(Duration::from_secs(freq_secs)).await;
     }
 }
 
