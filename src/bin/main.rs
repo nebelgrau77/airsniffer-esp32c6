@@ -165,64 +165,6 @@ async fn main(spawner: Spawner) -> ! {
     esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
 
     info!("Embassy initialized!");
-    
-    let i2c_bus = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(100)),
-    )
-    .unwrap()
-    .with_scl(peripherals.GPIO23)
-    .with_sda(peripherals.GPIO22)
-    .into_async();
-
-    info!("I2C initialized!");
-
-    let bus = Mutex::<NoopRawMutex, _>::new(i2c_bus);
-    let bus = I2CBUS.init(bus);
-
-    info!("shared I2C bus set up");
-
-    let mut ens160_aqi = Ens160::new(I2cDevice::new(bus), 0x53);
-    info!("Initialized ENS160");
-
-    Timer::after(Duration::from_millis(10)).await;
-    
-    ens160_aqi.reset().await.ok();
-    info!("ENS160 reset");
-    Timer::after(Duration::from_millis(10)).await;
-    
-    ens160_aqi.operational().await.ok();
-
-    info!("ens 160 id: {}", ens160_aqi.part_id().await.unwrap());
-
-    let delayns = DelayNs {};
-
-    let bme280 = AsyncBme280::new(I2cDevice::new(bus), delayns);
-
-    let bme280 = BME280_CELL.init(bme280);
-
-    bme280.init().await.unwrap();
-
-    bme280.set_sampling_configuration(
-    Configuration::default()
-        .with_temperature_oversampling(Oversampling::Oversample1)
-        .with_pressure_oversampling(Oversampling::Oversample1)
-        .with_humidity_oversampling(Oversampling::Oversample1)
-        .with_sensor_mode(SensorMode::Normal)
-    ).await.unwrap();
-
-    info!("BME280 set up");
-    
-    info!("bme280 id: {}", bme280.chip_id().await.unwrap());
-
-    Timer::after(Duration::from_millis(10)).await;
-
-    let measurements = bme280.read_sample().await.unwrap();
-    
-    info!("calibrating...");
-
-    ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.ok();
-    ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.ok();
 
     // set up display
 
@@ -286,6 +228,66 @@ async fn main(spawner: Spawner) -> ! {
         }).unwrap();   
 
     Timer::after(Duration::from_millis(1000)).await;
+
+    let i2c_bus = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(100)),
+    )
+    .unwrap()
+    .with_scl(peripherals.GPIO23)
+    .with_sda(peripherals.GPIO22)
+    .into_async();
+
+    info!("I2C initialized!");
+
+    let bus = Mutex::<NoopRawMutex, _>::new(i2c_bus);
+    let bus = I2CBUS.init(bus);
+
+    info!("shared I2C bus set up");
+
+    let mut ens160_aqi = Ens160::new(I2cDevice::new(bus), 0x53);
+    info!("Initialized ENS160");
+
+    Timer::after(Duration::from_millis(10)).await;
+    
+    ens160_aqi.reset().await.ok();
+    info!("ENS160 reset");
+    Timer::after(Duration::from_millis(10)).await;
+    
+    ens160_aqi.operational().await.ok();
+
+    info!("ens 160 id: {}", ens160_aqi.part_id().await.unwrap());
+
+    let delayns = DelayNs {};
+
+    let bme280 = AsyncBme280::new(I2cDevice::new(bus), delayns);
+
+    let bme280 = BME280_CELL.init(bme280);
+
+    bme280.init().await.unwrap();
+
+    bme280.set_sampling_configuration(
+    Configuration::default()
+        .with_temperature_oversampling(Oversampling::Oversample1)
+        .with_pressure_oversampling(Oversampling::Oversample1)
+        .with_humidity_oversampling(Oversampling::Oversample1)
+        .with_sensor_mode(SensorMode::Normal)
+    ).await.unwrap();
+
+    info!("BME280 set up");
+    
+    info!("bme280 id: {}", bme280.chip_id().await.unwrap());
+
+    Timer::after(Duration::from_millis(10)).await;
+
+    let measurements = bme280.read_sample().await.unwrap();
+    
+    info!("calibrating...");
+
+    ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.ok();
+    ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.ok();
+
+
 
     let mut last_data = DisplayData {
         bme_data: Enviro { temperature: 0.0, humidity: 0.0, pressure: 0.0 },
