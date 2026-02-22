@@ -289,8 +289,8 @@ async fn main(spawner: Spawner) -> ! {
     };
 
     // spawn tasks to read ENS160 and BME280 sensors
-    spawner.spawn(get_aqi(ens160_aqi, led, 60u32, 10u64)).unwrap_or_else(|_| defmt::panic!("could not spawn aqi task"));
-    spawner.spawn(get_measurements(bme280, 5u64)).unwrap_or_else(|_| defmt::panic!("could not spawn bme280 task"));
+    spawner.spawn(get_aqi(ens160_aqi, led, 60u32, 5u64)).unwrap_or_else(|_| defmt::panic!("could not spawn aqi task"));
+    spawner.spawn(get_measurements(bme280, 2u64)).unwrap_or_else(|_| defmt::panic!("could not spawn bme280 task"));
     
     loop {
         // wait for the trigger to update display with sensor data

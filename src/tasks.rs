@@ -32,14 +32,16 @@ pub async fn get_aqi(
 
         if let Ok(status) = sensor.status().await {
             if status.data_is_ready() {                                    
+                let tvoc = sensor.tvoc().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 AQI"));
+                let aqi = sensor.air_quality_index().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 TVOC")) as u8;
                 let airquality = AQIData {
-                    tvoc: sensor.tvoc().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 AQI")),                                        
-                    aqi: sensor.air_quality_index().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 TVOC")) as u8
+                    tvoc: tvoc,                                        
+                    aqi: aqi,
                 };
                 
                 AQISIGNAL.signal(airquality);
 
-                info!("got air quality data from sensor");
+                info!("got air quality data from sensor, AQI {}, TVOC {}", aqi, tvoc);
                 let counter = COUNTER.load(core::sync::atomic::Ordering::Relaxed);
                 if counter >= calibration {
                     info!("time to calibrate...");
