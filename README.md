@@ -11,7 +11,6 @@ ENS160 switches to idle mode after every measurement cycle. This way if the two 
 #### Notes:
 
 - this code uses a slightly customized version of mipidsi, with the ST7735s display set to 128x160 instead of the original 132x162; the bigger size causes distortion at one of the borders of the screen
-- can be ported to ESP32S3 but not to C3 due to incompatibility of some ratatui dependencies
-
-[![Watch the video](https://raw.githubusercontent.com/nebelgrau77/airsniffer/feat_refactor_tasks/thumbnail.png)](https://raw.githubusercontent.com/nebelgrau77/airsniffer/feat_refactor_tasks/AirSniffer.mv4)
+- https://github.com/nebelgrau77/airsniffer-esp32c6/blob/feat_refactor_tasks/AirSniffer.m4v
+[![Watch the video](https://github.com/nebelgrau77/airsniffer-esp32c6/blob/feat_refactor_tasks/thumbnail.png)](https://github.com/nebelgrau77/airsniffer-esp32c6/blob/feat_refactor_tasks/AirSniffer.m4v)
 
