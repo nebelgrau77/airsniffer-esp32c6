@@ -233,7 +233,9 @@ async fn main(spawner: Spawner) -> ! {
     
     ens160_aqi.operational().await.unwrap_or_else(|_| defmt::panic!("could not turn on ens160"));
 
-    info!("ens 160 id: {}", ens160_aqi.part_id().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 id")));
+    let ens160id = ens160_aqi.part_id().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 id"));
+
+    info!("ens 160 id: {}", ens160id);
 
     let delayns = DelayNs {};
 
@@ -252,8 +254,10 @@ async fn main(spawner: Spawner) -> ! {
     ).await.unwrap_or_else(|_| defmt::panic!("could not configure bme280"));
 
     info!("BME280 set up");
-    
-    info!("bme280 id: {}", bme280.chip_id().await.unwrap_or_else(|_| defmt::panic!("could not get bme280 id")));
+
+    let bme280id = bme280.chip_id().await.unwrap_or_else(|_| defmt::panic!("could not get bme280 id"));
+
+    info!("bme280 id: {}", bme280id);
 
     Timer::after(Duration::from_millis(10)).await;
 
@@ -263,6 +267,10 @@ async fn main(spawner: Spawner) -> ! {
 
     ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 temperature"));
     ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 humidity"));
+
+
+    
+
 
     terminal.draw(
         |frame| {
