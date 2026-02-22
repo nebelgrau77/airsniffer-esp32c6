@@ -37,7 +37,7 @@ embassy-embedded-hal = {version="0.5.0", features=["defmt"]}
 esp-println      = { version = "0.16.1", features = ["defmt-espflash", "esp32c6"] }
 
 embedded-graphics = "0.8.1"
-profont = "0.7.0"
+
 arrayvec = { version="0.7.6", default-features=false}
 
 mousefood = { version="0.3.0", default-features = false, features = [
@@ -46,9 +46,6 @@ mousefood = { version="0.3.0", default-features = false, features = [
 ratatui = { version = "0.30", default-features = false }
 
 ens160 = {version = "0.6.1", default-features = false, features = ["async"]}
-
-
-#bme280 = { git = "https://github.com/RobinThrift/bme280-rs.git", version = "0.4", default-features = false, features = ["async"]}
 
 bme280-rs = "0.3.0"
 
