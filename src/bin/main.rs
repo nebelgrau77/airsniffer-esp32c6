@@ -206,77 +206,95 @@ async fn main(spawner: Spawner) -> ! {
 
     }
   
-    let i2c_bus = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(100)),
-    )
-    .unwrap_or_else(|_| defmt::panic!("could not set I2C bus"))
-    .with_scl(peripherals.GPIO23)
-    .with_sda(peripherals.GPIO22)
-    .into_async();
 
-    info!("I2C initialized!");
+    let sensors = async {
+        let i2c_bus = I2c::new(
+            peripherals.I2C0,
+            I2cConfig::default().with_frequency(Rate::from_khz(100)),
+            )
+            .map_err(|_| "could not set I2C bus")?
+            .with_scl(peripherals.GPIO23)
+            .with_sda(peripherals.GPIO22)
+            .into_async();
 
-    let bus = Mutex::<NoopRawMutex, _>::new(i2c_bus);
-    let bus = I2CBUS.init(bus);
+        info!("I2C initialized!");
 
-    info!("shared I2C bus set up");
+        let bus = Mutex::<NoopRawMutex, _>::new(i2c_bus);
+        let bus = I2CBUS.init(bus);
 
-    let mut ens160_aqi = Ens160::new(I2cDevice::new(bus), 0x53);
-    info!("Initialized ENS160");
+        info!("shared I2C bus set up");
 
-    Timer::after(Duration::from_millis(10)).await;
+        let mut ens160_aqi = Ens160::new(I2cDevice::new(bus), 0x53);
+        info!("Initialized ENS160");
+
+        Timer::after(Duration::from_millis(10)).await;
+        
+        ens160_aqi.reset().await.map_err(|_| "could not reset ens160")?;
+        info!("ENS160 reset");
+        Timer::after(Duration::from_millis(10)).await;
     
-    ens160_aqi.reset().await.unwrap_or_else(|_| defmt::panic!("could not reset ens160"));
-    info!("ENS160 reset");
-    Timer::after(Duration::from_millis(10)).await;
+        ens160_aqi.operational().await.map_err(|_| "could not turn on ens160")?;
+
+        let ens160id = ens160_aqi.part_id().await.map_err(|_| "could not get ens160 id")?;
+
+        info!("ens 160 id: {}", ens160id);
+
+        let delayns = DelayNs {};
+
+        let bme280 = AsyncBme280::new(I2cDevice::new(bus), delayns);
+
+        let bme280 = BME280_CELL.init(bme280);
+
+        bme280.init().await.map_err(|_| "could not initialize bme280")?;
+
+        bme280.set_sampling_configuration(
+        Configuration::default()
+            .with_temperature_oversampling(Oversampling::Oversample1)
+            .with_pressure_oversampling(Oversampling::Oversample1)
+            .with_humidity_oversampling(Oversampling::Oversample1)
+            .with_sensor_mode(SensorMode::Normal)
+        ).await.map_err(|_| "could not configure bme280")?;
+
+        info!("BME280 set up");
+
+        let bme280id = bme280.chip_id().await.map_err(|_| "could not get bme280 id")?;
+
+        info!("bme280 id: {}", bme280id);
+
+        Timer::after(Duration::from_millis(10)).await;
+
+        let measurements = bme280.read_sample().await.map_err(|_| "could not read bme280 measurements")?;
+        
+        info!("calibrating...");
+
+        ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.map_err(|_| "could not calibrate ens160 temperature")?;
+        ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.map_err(|_| "could not calibrate ens160 humidity")?;
+
+        Ok::<_, &'static str>((ens160_aqi, bme280, measurements))
+
+    }.await;
+
+
     
-    ens160_aqi.operational().await.unwrap_or_else(|_| defmt::panic!("could not turn on ens160"));
-
-    let ens160id = ens160_aqi.part_id().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 id"));
-
-    info!("ens 160 id: {}", ens160id);
-
-    let delayns = DelayNs {};
-
-    let bme280 = AsyncBme280::new(I2cDevice::new(bus), delayns);
-
-    let bme280 = BME280_CELL.init(bme280);
-
-    bme280.init().await.unwrap_or_else(|_| defmt::panic!("could not initialize bme280"));
-
-    bme280.set_sampling_configuration(
-    Configuration::default()
-        .with_temperature_oversampling(Oversampling::Oversample1)
-        .with_pressure_oversampling(Oversampling::Oversample1)
-        .with_humidity_oversampling(Oversampling::Oversample1)
-        .with_sensor_mode(SensorMode::Normal)
-    ).await.unwrap_or_else(|_| defmt::panic!("could not configure bme280"));
-
-    info!("BME280 set up");
-
-    let bme280id = bme280.chip_id().await.unwrap_or_else(|_| defmt::panic!("could not get bme280 id"));
-
-    info!("bme280 id: {}", bme280id);
-
-    Timer::after(Duration::from_millis(10)).await;
-
-    let measurements = bme280.read_sample().await.unwrap_or_else(|_| defmt::panic!("could not read bme280 measurements"));
-    
-    info!("calibrating...");
-
-    ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 temperature"));
-    ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 humidity"));
-
-
-    
-
-
-    terminal.draw(
-        |frame| {
+    let (ens160_aqi, bme280, measurements) = match sensors {
+        Ok(s) => {
+            terminal.draw(
+            |frame| {
                 draw_welcome(frame, "sensors ready!");
-        }).unwrap_or_else(|_| defmt::panic!("could not display messages"));   
+            }).unwrap_or_else(|_| defmt::panic!("could not display messages"));   
+            s
+        }
+        Err(msg) => {
+            error!("sensor init failed: {}", msg);
+            terminal.draw(
+            |frame| {
+                draw_welcome(frame, "sensors unavailable!");
+            }).unwrap_or_else(|_| defmt::panic!("could not display messages"));   
+            loop {}
+        }
 
+    };
+        
     Timer::after(Duration::from_secs(2)).await;
 
     let mut last_data = DisplayData {
