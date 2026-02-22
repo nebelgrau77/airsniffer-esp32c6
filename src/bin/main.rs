@@ -129,6 +129,14 @@ struct AirQualityData {
     aqi: u8
     }
 
+
+#[derive(Clone, Copy)]
+struct DisplayData {
+    bme_data: Enviro, 
+    ens_data: AQIData
+    }
+
+
 // structs to hold sensor data
 #[derive(Clone, Copy)]
 struct AQIData {    
@@ -300,8 +308,8 @@ async fn main(spawner: Spawner) -> ! {
     //let led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
 
     // TODO: Spawn some tasks
-    spawner.spawn(get_aqi(ens160_aqi, 5u32, 10u64)).ok();
-    spawner.spawn(get_measurements(bme280, 5u64)).ok();
+    spawner.spawn(get_aqi(ens160_aqi, 5u32, 4u64)).ok();
+    spawner.spawn(get_measurements(bme280, 2u64)).ok();
     //spawner.spawn(blink(led, 1000)).ok();
     
     // Create a custom config with a flush callback
@@ -317,7 +325,7 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("mousefood set up");
 
-
+    /*
     let mut last_data = AirQualityData {
         temperature: 0.0,
         humidity: 0.0,
@@ -325,7 +333,12 @@ async fn main(spawner: Spawner) -> ! {
         tvoc: 0,
         aqi: 0,
     };
+     */
 
+    let mut last_data = DisplayData {
+        bme_data: Enviro { temperature: 0.0, humidity: 0.0, pressure: 0.0 },
+        ens_data: AQIData { tvoc: 0, aqi: 0 }
+    };
 
     loop {
         TRIGGER.wait().await;
@@ -335,15 +348,22 @@ async fn main(spawner: Spawner) -> ! {
         //let aqidata = AQISIGNAL.wait().await;
         info!("got data: temp {}, hum {}, press {}", enviro.temperature, enviro.humidity, enviro.pressure);
 
+        last_data.bme_data.temperature = enviro.temperature;
+        last_data.bme_data.humidity = enviro.humidity;
+        last_data.bme_data.pressure = enviro.pressure;
+
+        /*
         last_data.temperature = enviro.temperature;
         last_data.humidity = enviro.humidity;
         last_data.pressure = enviro.pressure;
-
+         */
         drop(enviro);
 
         if let Some(aqidata) = AQISIGNAL.try_take() {
-            last_data.tvoc = aqidata.tvoc;
-            last_data.aqi = aqidata.aqi;
+            //last_data.tvoc = aqidata.tvoc;
+            //last_data.aqi = aqidata.aqi;
+            last_data.ens_data.tvoc = aqidata.tvoc;
+            last_data.ens_data.aqi = aqidata.aqi;
         }
 
         terminal.draw(
@@ -361,7 +381,7 @@ const CWARNING: Color = Color::Rgb(209, 154, 102);
 //const BKGD: Color = Color::Rgb(35, 39, 46);
 
 
-fn draw(frame: &mut Frame, aqidata: AirQualityData) {
+fn draw(frame: &mut Frame, display_data: DisplayData) {
 
     let vertical = Layout::vertical([
         //Constraint::Percentage(30),         
@@ -381,9 +401,9 @@ fn draw(frame: &mut Frame, aqidata: AirQualityData) {
     let [fourth_bottom_left, fourth_bottom_right] = horizontal_fourth.areas(fourth);
     
     
-    info!("AQI: {}", aqidata.aqi);
+    //info!("AQI: {}", aqidata.aqi);
 
-    let gauge = match aqidata.aqi {
+    let gauge = match display_data.ens_data.aqi {
         1 => Gauge::default()            
             .gauge_style(Style::new().fg(CINFO).bg(Color::Black))
             .ratio(1_f64)
@@ -420,7 +440,7 @@ fn draw(frame: &mut Frame, aqidata: AirQualityData) {
     // four frames - top left        
 
     let mut textbuffer = ArrayString::<16>::new();
-    write!(&mut textbuffer, "{} C", round_float(aqidata.temperature)).unwrap();
+    write!(&mut textbuffer, "{} C", round_float(display_data.bme_data.temperature)).unwrap();
 
     //let paragraph = Paragraph::new(textbuffer.as_str().white())
     let paragraph = Paragraph::new(textbuffer.as_str().fg(CWARNING))
@@ -437,7 +457,7 @@ fn draw(frame: &mut Frame, aqidata: AirQualityData) {
     // four frames - top right        
 
     let mut textbuffer = ArrayString::<16>::new();
-    write!(&mut textbuffer, "{} %", round_float(aqidata.humidity)).unwrap();
+    write!(&mut textbuffer, "{} %", round_float(display_data.bme_data.humidity)).unwrap();
 
     let paragraph = Paragraph::new(textbuffer.as_str().fg(CWARNING))
         .wrap(Wrap { trim: true })
@@ -455,7 +475,7 @@ fn draw(frame: &mut Frame, aqidata: AirQualityData) {
     // four frames - bottom left        
 
     let mut textbuffer = ArrayString::<16>::new();
-    write!(&mut textbuffer, "{} hPa", round_float(aqidata.pressure)).unwrap();
+    write!(&mut textbuffer, "{} hPa", round_float(display_data.bme_data.pressure)).unwrap();
 
 
     let paragraph = Paragraph::new(textbuffer.as_str().fg(CWARNING))
@@ -474,7 +494,7 @@ fn draw(frame: &mut Frame, aqidata: AirQualityData) {
     // four frames - bottom right
 
     let mut textbuffer = ArrayString::<16>::new();
-    write!(&mut textbuffer, "{}", aqidata.tvoc).unwrap();
+    write!(&mut textbuffer, "{}", display_data.ens_data.tvoc).unwrap();
 
     let paragraph = Paragraph::new(textbuffer.as_str().fg(CWARNING))
         .wrap(Wrap { trim: true })
