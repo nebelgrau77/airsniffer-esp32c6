@@ -2,7 +2,7 @@
 
 Get information about your indoor climate at a glance!
 
-Based on [this example](https://esp32.implrust.com/ratatui/hello-rust/using-mipidsi.html). Powered by [Ratatui](https://ratatui.rs) / [Mousefood](https://github.com/ratatui/mousefood/tree/main/mousefood) and [Embassy](https://embassy.dev).
+Based on [this example](https://esp32.implrust.com/ratatui/hello-rust/using-mipidsi.html). Powered by [Ratatui](https://ratatui.rs) / [Mousefood](https://github.com/ratatui/mousefood/tree/main/mousefood) and [Embassy](https://embassy.dev). 
 
 Reads and display on a regular basis data from BME280 (temperature, humidity, pressure) and ENS160 sensor (AQI and TVOC). Temperature and humidity are also used to calibrate the ENS160 on a regular basis for better accuracy.
 

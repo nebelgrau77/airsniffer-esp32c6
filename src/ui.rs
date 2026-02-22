@@ -15,7 +15,7 @@ pub fn draw_welcome(frame: &mut Frame, msg: &str) {
 
 
 
-pub fn draw(frame: &mut Frame, display_data: DisplayData) {
+pub fn draw_dashboard(frame: &mut Frame, display_data: DisplayData) {
 
     let vertical = Layout::vertical([
         //Constraint::Percentage(30),         

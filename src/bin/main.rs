@@ -7,7 +7,7 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
-use defmt::info;
+use defmt::{info, error};
 use esp_println as _;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer, Delay as DelayNs};
@@ -57,22 +57,15 @@ use mipidsi::{
     }
 };
 
-// Embedded graphics stuff
+// Embedded graphics components
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
-//use embedded_graphics::text::{Baseline, Text};
-
-//use core::fmt::Write;   
-//use arrayvec::ArrayString;
 
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
 
-// For ratatui
+// For ratatui/mousefood
 use mousefood::{ColorTheme, EmbeddedBackend, EmbeddedBackendConfig, fonts, prelude::Rgb888};
-//use ratatui::layout::{Constraint, Flex, Layout};
-//use ratatui::widgets::{Block, Paragraph, Wrap, Gauge};
-//use ratatui::{style::*, Frame, Terminal};
 use ratatui::Terminal;
 
 // sensors
@@ -81,8 +74,7 @@ use bme280_rs::{AsyncBme280, Configuration, Oversampling, SensorMode};
 
 // structs and drawing functions
 use c6_tft::{AQIData, DisplayData, Enviro};
-use c6_tft::draw::{draw, draw_welcome};
-
+use c6_tft::ui::{draw_dashboard, draw_welcome};
 
 // Types defined for I2C devices (bus)
 type SharedI2cDevice = I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>;
@@ -94,7 +86,6 @@ static SPI_BUFFER: StaticCell<[u8; 1024]> = StaticCell::new();
 static I2CBUS: StaticCell<Mutex<NoopRawMutex, I2c<'static, Async>>> = StaticCell::new();
 
 // signals to pass between tasks
-//static AQISIGNAL: Signal<CriticalSectionRawMutex, AirQualityData> = Signal::new();
 static AQISIGNAL: Signal<CriticalSectionRawMutex, AQIData> = Signal::new();
 
 // shared last BME data - readable by any task, never consumed
@@ -112,17 +103,13 @@ static BME280_CELL: StaticCell<AsyncBme280<SharedI2cDevice, DelayNs>> = StaticCe
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 
-
-
-
-
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    error!("panic: {}", defmt::Display2Format(info));
     loop {}
 }
 
 extern crate alloc;
-
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -155,7 +142,7 @@ async fn main(spawner: Spawner) -> ! {
     SpiConfig::default()
         .with_frequency(Rate::from_mhz(25))
         .with_mode(SpiMode::_0))
-        .unwrap()
+        .unwrap_or_else(|_| defmt::panic!("could not set SPI"))
         .with_sck(peripherals.GPIO19)
         .with_mosi(peripherals.GPIO18);
 
@@ -165,7 +152,7 @@ async fn main(spawner: Spawner) -> ! {
     let reset = Output::new(peripherals.GPIO2, Level::Low, OutputConfig::default());
     let buffer = SPI_BUFFER.init([0; 1024]);
 
-    let spi_dev = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
+    let spi_dev = ExclusiveDevice::new_no_delay(spi, cs).unwrap_or_else(|_| defmt::panic!("could not set SPI device"));
     let interface = SpiInterface::new(spi_dev, dc, buffer);
  
     let mut display = Builder::new(
@@ -174,15 +161,14 @@ async fn main(spawner: Spawner) -> ! {
     )
     .reset_pin(reset)
     .init(&mut Delay::new())
-    .unwrap();
+    .unwrap_or_else(|_| defmt::panic!("could not set display"));
 
     // CRITICAL: Set orientation BEFORE clearing and creating backend
     display.set_orientation(
     Orientation::default().rotate(Rotation::Deg90)
-    ).unwrap();
-
+    )  .unwrap_or_else(|_| defmt::panic!("could not set display orientation"));
     
-    display.clear(Rgb565::BLACK).unwrap();
+    display.clear(Rgb565::BLACK).unwrap_or_else(|_| defmt::panic!("could not clear display"));
 
     info!("display set up");
 
@@ -194,7 +180,6 @@ async fn main(spawner: Spawner) -> ! {
         yellow: Rgb888::new(255,100,0),
         ..ColorTheme::ansi()
     };
-
   
     // Create a custom config for the mousefood terminal
     let backend_config = EmbeddedBackendConfig 
@@ -206,34 +191,26 @@ async fn main(spawner: Spawner) -> ! {
     };
 
     let backend = EmbeddedBackend::new(&mut display, backend_config);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::new(backend).unwrap_or_else(|_| defmt::panic!("could not set mousefood terminal"));
 
     info!("mousefood set up");
 
-    terminal.draw(
+    for msg in ["powered by Ratatui/Mousefood     and Embassy", "system starting..."] {
+
+        terminal.draw(
         |frame| {
-                draw_welcome(frame, "powered by Ratatui/Mousefood     and Embassy");
-        }).unwrap();   
+                draw_welcome(frame, msg);
+        }).unwrap_or_else(|_| defmt::panic!("could not display message"));   
 
     Timer::after(Duration::from_secs(2)).await;
 
-
-
-    terminal.draw(
-        |frame| {
-                draw_welcome(frame, "system starting...");
-        }).unwrap();   
-
-    Timer::after(Duration::from_secs(2)).await;
-
-
-
-
+    }
+  
     let i2c_bus = I2c::new(
         peripherals.I2C0,
         I2cConfig::default().with_frequency(Rate::from_khz(100)),
     )
-    .unwrap()
+    .unwrap_or_else(|_| defmt::panic!("could not set I2C bus"))
     .with_scl(peripherals.GPIO23)
     .with_sda(peripherals.GPIO22)
     .into_async();
@@ -250,13 +227,13 @@ async fn main(spawner: Spawner) -> ! {
 
     Timer::after(Duration::from_millis(10)).await;
     
-    ens160_aqi.reset().await.ok();
+    ens160_aqi.reset().await.unwrap_or_else(|_| defmt::panic!("could not reset ens160"));
     info!("ENS160 reset");
     Timer::after(Duration::from_millis(10)).await;
     
-    ens160_aqi.operational().await.ok();
+    ens160_aqi.operational().await.unwrap_or_else(|_| defmt::panic!("could not turn on ens160"));
 
-    info!("ens 160 id: {}", ens160_aqi.part_id().await.unwrap());
+    info!("ens 160 id: {}", ens160_aqi.part_id().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 id")));
 
     let delayns = DelayNs {};
 
@@ -264,7 +241,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let bme280 = BME280_CELL.init(bme280);
 
-    bme280.init().await.unwrap();
+    bme280.init().await.unwrap_or_else(|_| defmt::panic!("could not initialize bme280"));
 
     bme280.set_sampling_configuration(
     Configuration::default()
@@ -272,37 +249,39 @@ async fn main(spawner: Spawner) -> ! {
         .with_pressure_oversampling(Oversampling::Oversample1)
         .with_humidity_oversampling(Oversampling::Oversample1)
         .with_sensor_mode(SensorMode::Normal)
-    ).await.unwrap();
+    ).await.unwrap_or_else(|_| defmt::panic!("could not configure bme280"));
 
     info!("BME280 set up");
     
-    info!("bme280 id: {}", bme280.chip_id().await.unwrap());
+    info!("bme280 id: {}", bme280.chip_id().await.unwrap_or_else(|_| defmt::panic!("could not get bme280 id")));
 
     Timer::after(Duration::from_millis(10)).await;
 
-    let measurements = bme280.read_sample().await.unwrap();
+    let measurements = bme280.read_sample().await.unwrap_or_else(|_| defmt::panic!("could not read bme280 measurements"));
     
     info!("calibrating...");
 
-    ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.ok();
-    ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.ok();
+    ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 temperature"));
+    ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 humidity"));
 
     terminal.draw(
         |frame| {
                 draw_welcome(frame, "sensors ready!");
-        }).unwrap();   
+        }).unwrap_or_else(|_| defmt::panic!("could not display messages"));   
 
     Timer::after(Duration::from_secs(2)).await;
 
-
     let mut last_data = DisplayData {
-        bme_data: Enviro { temperature: 0.0, humidity: 0.0, pressure: 0.0 },
+        bme_data: Enviro { 
+            temperature: measurements.temperature.unwrap_or(0.0), 
+            humidity: measurements.humidity.unwrap_or(0.0), 
+            pressure: measurements.pressure.unwrap_or(0.0) },
         ens_data: AQIData { tvoc: 0, aqi: 0 }
     };
 
     // TODO: Spawn some tasks
-    spawner.spawn(get_aqi(ens160_aqi, 5u32, 4u64)).ok();
-    spawner.spawn(get_measurements(bme280, 2u64)).ok();
+    spawner.spawn(get_aqi(ens160_aqi, 5u32, 4u64)).unwrap_or_else(|_| defmt::panic!("could not spawn aqi task"));
+    spawner.spawn(get_measurements(bme280, 2u64)).unwrap_or_else(|_| defmt::panic!("could not spawn bme280 task"));
     
     loop {
         // wait for the trigger to update display with sensor data
@@ -326,18 +305,13 @@ async fn main(spawner: Spawner) -> ! {
 
         terminal.draw(
         |frame| {
-                draw(frame, last_data);
-        }).unwrap();    
+                draw_dashboard(frame, last_data);
+        }).unwrap_or_else(|_| defmt::panic!("could not display dashboard"));    
   
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
 }
-
-//const CINFO: Color = Color::Rgb(76, 209, 224);
-//const CWARNING: Color = Color::Rgb(209, 154, 102);
-
-
 
 
 #[embassy_executor::task]
@@ -348,14 +322,14 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq_sec
     
     loop {    
         info!("wake up the sensor...");
-        sensor.operational().await.ok();
+        sensor.operational().await.unwrap_or_else(|_| defmt::panic!("could not make ens160 operational"));
         Timer::after(Duration::from_millis(1000)).await;
 
         if let Ok(status) = sensor.status().await {
             if status.data_is_ready() {                                    
                 let airquality = AQIData {
-                    tvoc: sensor.tvoc().await.unwrap(),                                        
-                    aqi: sensor.air_quality_index().await.unwrap() as u8
+                    tvoc: sensor.tvoc().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 AQI")),                                        
+                    aqi: sensor.air_quality_index().await.unwrap_or_else(|_| defmt::panic!("could not get ens160 TVOC")) as u8
                 };
                 
                 AQISIGNAL.signal(airquality);
@@ -366,8 +340,8 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq_sec
                     info!("time to calibrate...");
                     let envi = ENVIRO_STATE.lock().await;
                     info!("got data for calibration: {}°C, {} %", envi.temperature, envi.humidity);
-                    sensor.set_temp((envi.temperature * 100.0) as i16).await.ok();
-                    sensor.set_hum((envi.humidity * 100.0) as u16).await.ok();
+                    sensor.set_temp((envi.temperature * 100.0) as i16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 temperature"));
+                    sensor.set_hum((envi.humidity * 100.0) as u16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 humidity"));
                     info!("sensor calibrated");
                     drop(envi); // release lock
                     COUNTER.store(0, Ordering::Relaxed);
@@ -376,7 +350,7 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq_sec
                 }
             }
         
-        sensor.idle().await.ok();
+        sensor.idle().await.unwrap_or_else(|_| defmt::panic!("could not set ens160 to idle mode"));
         info!("sensor put to sleep...");
         Timer::after(Duration::from_secs(freq_secs)).await;
         }
@@ -384,14 +358,6 @@ async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq_sec
 }
 
 
-#[embassy_executor::task]
-// blinkenlight
-async fn blink(mut led: Output<'static>, ms: u16) {  
-    loop {
-        led.toggle();
-        Timer::after(Duration::from_millis(ms as u64)).await;
-    }
-}
 
 
 #[embassy_executor::task]
@@ -402,7 +368,7 @@ async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, NoopR
         
     loop {
 
-        let measurements = bme.read_sample().await.unwrap();
+        let measurements = bme.read_sample().await.unwrap_or_else(|_| defmt::panic!("could not read bme280 measurements"));
         
         info!("task - Got BME measurements! T: {}°C, RH: {}%, P: {} Pa",             
             measurements.temperature.unwrap_or(0.0),
@@ -424,3 +390,11 @@ async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, NoopR
 }
 
 
+#[embassy_executor::task]
+// blinkenlight
+async fn blink(mut led: Output<'static>, ms: u16) {  
+    loop {
+        led.toggle();
+        Timer::after(Duration::from_millis(ms as u64)).await;
+    }
+}
