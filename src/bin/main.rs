@@ -69,7 +69,7 @@ use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
 
 // For ratatui
-use mousefood::{EmbeddedBackend, EmbeddedBackendConfig, fonts};
+use mousefood::{ColorTheme, EmbeddedBackend, EmbeddedBackendConfig, fonts, prelude::Rgb888};
 use ratatui::layout::{Constraint, Flex, Layout};
 use ratatui::widgets::{Block, Paragraph, Wrap, Gauge};
 use ratatui::{style::*, Frame, Terminal};
@@ -208,11 +208,18 @@ async fn main(spawner: Spawner) -> ! {
  
     //let led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
 
+    let theme = ColorTheme {          
+        yellow: Rgb888::new(255,100,0),
+        ..ColorTheme::ansi()
+    };
+
   
     // Create a custom config for the mousefood terminal
     let backend_config = EmbeddedBackendConfig 
     {
-        font_regular: fonts::MONO_6X12_OPTIMIZED,        
+        font_regular: fonts::MONO_6X12_OPTIMIZED,   
+        font_bold: Some(fonts::MONO_7X13),    
+        color_theme: theme,        
         ..Default::default()        
     };
 
@@ -224,10 +231,13 @@ async fn main(spawner: Spawner) -> ! {
 
     terminal.draw(
         |frame| {
-                draw_welcome(frame);
+                draw_welcome(frame, "system starting...");
         }).unwrap();   
 
-    Timer::after(Duration::from_millis(1000)).await;
+    Timer::after(Duration::from_secs(2)).await;
+
+
+
 
     let i2c_bus = I2c::new(
         peripherals.I2C0,
@@ -287,6 +297,12 @@ async fn main(spawner: Spawner) -> ! {
     ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.ok();
     ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.ok();
 
+    terminal.draw(
+        |frame| {
+                draw_welcome(frame, "sensors ready!");
+        }).unwrap();   
+
+    Timer::after(Duration::from_secs(2)).await;
 
 
     let mut last_data = DisplayData {
@@ -331,10 +347,10 @@ async fn main(spawner: Spawner) -> ! {
 const CINFO: Color = Color::Rgb(76, 209, 224);
 const CWARNING: Color = Color::Rgb(209, 154, 102);
 
-fn draw_welcome(frame: &mut Frame) {
-    let text = "setting up...";
-    let paragraph = Paragraph::new(text.white()).wrap(Wrap { trim: true });
-    let bordered_block = Block::bordered().title("Mousefood");
+fn draw_welcome(frame: &mut Frame, msg: &str) {
+    let text = msg;
+    let paragraph = Paragraph::new(text.yellow().not_bold()).wrap(Wrap { trim: true });
+    let bordered_block = Block::bordered().cyan().bold().title("AirSniffer");
     frame.render_widget(paragraph.block(bordered_block), frame.area());
 }
 
@@ -361,34 +377,34 @@ fn draw(frame: &mut Frame, display_data: DisplayData) {
 
     let gauge = match display_data.ens_data.aqi {
         1 => Gauge::default()            
-            .gauge_style(Style::new().fg(CINFO).bg(Color::Black))
+            .gauge_style(Style::new().cyan().on_black())
             .ratio(1_f64)
             .label("excellent"), 
         2 => Gauge::default()            
-            .gauge_style(Style::new().fg(CINFO).bg(Color::Black))
+            .gauge_style(Style::new().cyan().on_black())
             .ratio(1_f64)
             .label("good"), 
         3 => Gauge::default()            
-            .gauge_style(Style::new().fg(Color::Black).bg(CINFO))
+            .gauge_style(Style::new().black().on_cyan())
             .ratio(1_f64)
             .label("moderate"), 
         4 => Gauge::default()            
-            .gauge_style(Style::new().fg(Color::Black).bg(CWARNING))
+            .gauge_style(Style::new().black().on_yellow())
             .ratio(1_f64)
             .label("poor"), 
         5 => Gauge::default()            
-            .gauge_style(Style::new().fg(CWARNING).bg(Color::Black))
+            .gauge_style(Style::new().yellow().on_black())
             .ratio(1_f64)
             .label("unhealthy"), 
         _ => Gauge::default()            
-            .gauge_style(Style::new().fg(Color::White).bg(Color::Black))
+            .gauge_style(Style::new().white().on_black())
             .ratio(1_f64)
             .label("unknown"), 
     
     };    
 
     let bordered_block = Block::bordered()
-        .border_style(Style::new().fg(CINFO))                
+        .border_style(Style::new().cyan())                
         .title("Air Quality");
     
     frame.render_widget(gauge.block(bordered_block), second);
@@ -399,12 +415,12 @@ fn draw(frame: &mut Frame, display_data: DisplayData) {
     write!(&mut textbuffer, "{} C", round_float(display_data.bme_data.temperature)).unwrap();
 
     //let paragraph = Paragraph::new(textbuffer.as_str().white())
-    let paragraph = Paragraph::new(textbuffer.as_str().fg(CWARNING))
+    let paragraph = Paragraph::new(textbuffer.as_str().yellow())
         .wrap(Wrap { trim: true })
         .centered();
 
     let bordered_block = Block::bordered()
-        .border_style(Style::new().fg(CINFO))
+        .border_style(Style::new().cyan())
         //.padding(Padding::new(0, 0, third_bottom_left.height / 4, 0))
         .title("Temperature");
     
@@ -415,13 +431,13 @@ fn draw(frame: &mut Frame, display_data: DisplayData) {
     let mut textbuffer = ArrayString::<16>::new();
     write!(&mut textbuffer, "{} %", round_float(display_data.bme_data.humidity)).unwrap();
 
-    let paragraph = Paragraph::new(textbuffer.as_str().fg(CWARNING))
+    let paragraph = Paragraph::new(textbuffer.as_str().yellow())
         .wrap(Wrap { trim: true })
         .centered()
         ;
 
     let bordered_block = Block::bordered()
-        .border_style(Style::new().fg(CINFO))
+        .border_style(Style::new().cyan())
         //.padding(Padding::new(0, 0, third_bottom_right.height / 4, 0))
         .title("Humidity");
 
@@ -432,13 +448,13 @@ fn draw(frame: &mut Frame, display_data: DisplayData) {
     let mut textbuffer = ArrayString::<16>::new();
     write!(&mut textbuffer, "{} hPa", round_float(display_data.bme_data.pressure)).unwrap();
 
-    let paragraph = Paragraph::new(textbuffer.as_str().fg(CWARNING))
+    let paragraph = Paragraph::new(textbuffer.as_str().yellow())
         .wrap(Wrap { trim: true })
         .centered()
         ;
 
     let bordered_block = Block::bordered()
-        .border_style(Style::new().fg(CINFO))
+        .border_style(Style::new().cyan())
         //.padding(Padding::new(0, 0, fourth_bottom_left.height / 4, 0))
         .title("Pressure");
 
@@ -449,13 +465,13 @@ fn draw(frame: &mut Frame, display_data: DisplayData) {
     let mut textbuffer = ArrayString::<16>::new();
     write!(&mut textbuffer, "{}", display_data.ens_data.tvoc).unwrap();
 
-    let paragraph = Paragraph::new(textbuffer.as_str().fg(CWARNING))
+    let paragraph = Paragraph::new(textbuffer.as_str().yellow())
         .wrap(Wrap { trim: true })
         .centered()
         ;
 
     let bordered_block = Block::bordered()
-        .border_style(Style::new().fg(CINFO))
+        .border_style(Style::new().cyan())
         //.padding(Padding::new(0, 0, fourth_bottom_right.height / 4, 0))
         .title("TVOC");
 
