@@ -96,13 +96,3 @@ pub async fn get_measurements(bme: &'static mut AsyncBme280<I2cDevice<'static, N
         Timer::after(Duration::from_secs(freq_secs)).await;
     }
 }
-
-
-#[embassy_executor::task]
-// blinkenlight
-pub async fn blink(mut led: Output<'static>, ms: u16) {  
-    loop {
-        led.toggle();
-        Timer::after(Duration::from_millis(ms as u64)).await;
-    }
-}
