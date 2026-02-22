@@ -154,7 +154,7 @@ async fn main(spawner: Spawner) -> ! {
 
     Timer::after(Duration::from_millis(500)).await;
  
-    //let led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
+    let mut led = Output::new(peripherals.GPIO15, Level::High, OutputConfig::default());
 
     let theme = ColorTheme {          
         yellow: Rgb888::new(255,100,0),
@@ -247,9 +247,12 @@ async fn main(spawner: Spawner) -> ! {
         
         info!("calibrating...");
 
+        led.toggle();
         ens160_aqi.set_temp((measurements.temperature.unwrap_or(25.0) * 100.0) as i16).await.map_err(|_| "could not calibrate ens160 temperature")?;
         ens160_aqi.set_hum((measurements.humidity.unwrap_or(50.0) * 100.0) as u16).await.map_err(|_| "could not calibrate ens160 humidity")?;
-
+        Timer::after(Duration::from_millis(50)).await;
+        led.toggle();
+        
         Ok::<_, &'static str>((ens160_aqi, bme280, measurements))
 
     }.await;
@@ -286,8 +289,8 @@ async fn main(spawner: Spawner) -> ! {
     };
 
     // spawn tasks to read ENS160 and BME280 sensors
-    spawner.spawn(get_aqi(ens160_aqi, 60u32, 10u64)).unwrap_or_else(|_| defmt::panic!("could not spawn aqi task"));
-    spawner.spawn(get_measurements(bme280, 2u64)).unwrap_or_else(|_| defmt::panic!("could not spawn bme280 task"));
+    spawner.spawn(get_aqi(ens160_aqi, led, 2u32, 5u64)).unwrap_or_else(|_| defmt::panic!("could not spawn aqi task"));
+    spawner.spawn(get_measurements(bme280, 1u64)).unwrap_or_else(|_| defmt::panic!("could not spawn bme280 task"));
     
     loop {
         // wait for the trigger to update display with sensor data

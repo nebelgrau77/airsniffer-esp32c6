@@ -16,7 +16,11 @@ use crate::{AQIData, SharedI2cDevice, AQISIGNAL, TRIGGER, COUNTER, ENVIRO_STATE}
 
 
 #[embassy_executor::task]
-pub async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq_secs: u64) {    
+pub async fn get_aqi(
+    mut sensor: Ens160<SharedI2cDevice>, 
+    mut led: Output<'static>,
+    calibration: u32, 
+    freq_secs: u64) {    
     // check if ENS160 is ready and get its data
     // update the sensor state with the results
     // if it's time to calibrate, get BME280 data and update ENS160 reference temperature and humidity
@@ -39,6 +43,7 @@ pub async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq
                 let counter = COUNTER.load(core::sync::atomic::Ordering::Relaxed);
                 if counter >= calibration {
                     info!("time to calibrate...");
+                    led.toggle();
                     let envi = ENVIRO_STATE.lock().await;
                     info!("got data for calibration: {}°C, {} %", envi.temperature, envi.humidity);
                     sensor.set_temp((envi.temperature * 100.0) as i16).await.unwrap_or_else(|_| defmt::panic!("could not calibrate ens160 temperature"));
@@ -46,6 +51,8 @@ pub async fn get_aqi(mut sensor: Ens160<SharedI2cDevice>, calibration: u32, freq
                     info!("sensor calibrated");
                     drop(envi); // release lock
                     COUNTER.store(0, Ordering::Relaxed);
+                    Timer::after(Duration::from_millis(50)).await;
+                    led.toggle();
                 } else {
                     COUNTER.store(counter.wrapping_add(1), Ordering::Relaxed);
                 }
