@@ -186,7 +186,7 @@ async fn main(spawner: Spawner) -> ! {
 
     }
   
-
+    // set up the I2C sensors
     let sensors = async {
         let i2c_bus = I2c::new(
             peripherals.I2C0,
@@ -285,13 +285,12 @@ async fn main(spawner: Spawner) -> ! {
         ens_data: AQIData { tvoc: 0, aqi: 0 }
     };
 
-    // TODO: Spawn some tasks
-    spawner.spawn(get_aqi(ens160_aqi, 5u32, 4u64)).unwrap_or_else(|_| defmt::panic!("could not spawn aqi task"));
+    // spawn tasks to read ENS160 and BME280 sensors
+    spawner.spawn(get_aqi(ens160_aqi, 60u32, 10u64)).unwrap_or_else(|_| defmt::panic!("could not spawn aqi task"));
     spawner.spawn(get_measurements(bme280, 2u64)).unwrap_or_else(|_| defmt::panic!("could not spawn bme280 task"));
     
     loop {
         // wait for the trigger to update display with sensor data
-
         TRIGGER.wait().await;
 
         let enviro = ENVIRO_STATE.lock().await;
@@ -315,8 +314,7 @@ async fn main(spawner: Spawner) -> ! {
         }).unwrap_or_else(|_| defmt::panic!("could not display dashboard"));    
   
     }
-
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
+    
 }
 
 
